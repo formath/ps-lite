@@ -34,8 +34,7 @@ class Resender {
    *
    */
   void AddOutgoing(const Message& msg) {
-    if (msg.meta.control.cmd == Control::ACK
-      || msg.meta.control.cmd == Control::ADD_NODE) return;
+    if (msg.meta.control.cmd == Control::ACK) return;
     CHECK_NE(msg.meta.timestamp, Meta::kEmpty) << msg.DebugString();
     auto key = GetKey(msg);
     std::lock_guard<std::mutex> lk(mu_);
@@ -54,8 +53,8 @@ class Resender {
    */
   bool AddIncomming(const Message& msg) {
     // a message can be received by multiple times
-    if (msg.meta.control.cmd == Control::TERMINATE
-      || msg.meta.control.cmd == Control::ADD_NODE) {
+    if (msg.meta.control.cmd == Control::TERMINATE || 
+        msg.meta.control.cmd == Control::ADD_NODE) {
       return false;
     } else if (msg.meta.control.cmd == Control::ACK) {
       mu_.lock();
@@ -77,8 +76,8 @@ class Resender {
       ack.meta.sender = msg.meta.recver;
       ack.meta.control.cmd = Control::ACK;
       ack.meta.control.msg_sig = key;
+      PS_VLOG(1) << "send ack: " << ack.DebugString();
       van_->Send(ack);
-      // warning
       if (duplicated) LOG(WARNING) << "Duplicated message: " << msg.DebugString();
       return duplicated;
     }
@@ -127,7 +126,9 @@ class Resender {
       }
       mu_.unlock();
 
-      for (const auto& msg : resend) van_->Send(msg);
+      for (const auto& msg: resend) {
+        van_->Send(msg);
+      }
     }
   }
   std::thread* monitor_;

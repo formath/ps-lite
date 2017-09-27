@@ -9,10 +9,6 @@ include $(config)
 
 include make/ps.mk
 
-ifndef CXX
-CXX = g++
-endif
-
 ifndef DEPS_PATH
 DEPS_PATH = $(shell pwd)/deps
 endif

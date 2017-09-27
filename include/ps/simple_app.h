@@ -57,6 +57,14 @@ class SimpleApp {
    */
   virtual inline void Wait(int timestamp) { obj_->WaitRequest(timestamp); }
 
+  /**
+   * \brief wait until a request is finished or timeout
+   *
+   * \param timestamp
+   * \param timeout ms
+   */
+  virtual inline bool Wait(int timestamp, int timeout) { return obj_->WaitRequest(timestamp, timeout); }
+
 
   /**
    * \brief send back a response for a request

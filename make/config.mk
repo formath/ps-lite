@@ -9,10 +9,5 @@
 #  - type make or make -j n on each of the folder
 #----------------------------------------------------
 
-# choice of compiler
-export CC = gcc
-export CXX = g++
-export MPICXX = mpicxx
-
-# feature id type, use uint32 or uint64
+# feature id type, uint32 or uint64
 USE_KEY32 = 0

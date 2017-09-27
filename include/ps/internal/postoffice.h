@@ -160,9 +160,6 @@ class Postoffice {
    */
   std::vector<int> GetDeadNodes(int t = 60);
 
-  /**
-   * \brief get max key id
-   */
   Key MaxKey() {
     return max_id_;
   }

@@ -63,6 +63,13 @@ class Customer {
   void WaitRequest(int timestamp);
 
   /**
+   * \brief wait until the request is finished or timeout. threadsafe
+   * \param timestamp the timestamp of the request
+   * \param timeout ms
+   */
+  bool WaitRequest(int timestamp, int timeout);
+
+  /**
    * \brief return the number of responses received for the request. threadsafe
    * \param timestamp the timestamp of the request
    */

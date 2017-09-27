@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include <thread>
 #include <chrono>
+#include <string>
 #include "ps/internal/postoffice.h"
 #include "ps/internal/message.h"
 #include "ps/base.h"
@@ -62,13 +63,18 @@ void Postoffice::Start(const char* argv0, const bool do_barrier) {
   }
 
   // start van
+  LOG(INFO) << "start van";
   van_->Start();
 
   // record start time
   start_time_ = time(NULL);
 
   // do a barrier here
-  if (do_barrier) Barrier(kWorkerGroup + kServerGroup + kScheduler);
+  if (do_barrier) {
+    LOG(INFO) << "do barrier";
+    Barrier(kWorkerGroup + kServerGroup + kScheduler);
+    LOG(INFO) << "barrier done";
+  }
 }
 
 void Postoffice::Finalize(const bool do_barrier) {

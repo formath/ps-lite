@@ -18,7 +18,7 @@ namespace ps {
 // don't send heartbeast in default. because if the scheduler received a
 // heartbeart signal from a node before connected to that node, then it could be
 // problem.
-static const int kDefaultHeartbeatInterval = 0;
+const static int kDefaultHeartbeatInterval = 0;
 
 Van* Van::Create(const std::string& type) {
   if (type == "zmq") {
@@ -71,10 +71,11 @@ void Van::Start() {
 
   // bind.
   my_node_.port = Bind(my_node_, is_scheduler_ ? 0 : 40);
-  PS_VLOG(1) << "Bind to " << my_node_.DebugString();
+  LOG(INFO) << "Bind to " << my_node_.DebugString();
   CHECK_NE(my_node_.port, -1) << "bind failed";
 
   // connect to the scheduler
+  LOG(INFO) << "Connect to scheduler";
   Connect(scheduler_);
 
   // for debug use
@@ -95,18 +96,17 @@ void Van::Start() {
     Send(msg);
   }
   // wait until ready
+  LOG(INFO) << "waiting for van ready";
   while (!ready_) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
   }
+  LOG(INFO) << "van is ready";
 
-  // resender
-  if (Environment::Get()->find("PS_RESEND") && atoi(Environment::Get()->find("PS_RESEND")) != 0) {
-    int timeout = 1000;
-    if (Environment::Get()->find("PS_RESEND_TIMEOUT")) {
-      timeout = atoi(Environment::Get()->find("PS_RESEND_TIMEOUT"));
-    }
-    resender_ = new Resender(timeout, 10, this);
+  int timeout = 1000;
+  if (Environment::Get()->find("PS_RESEND_TIMEOUT")) {
+    timeout = atoi(Environment::Get()->find("PS_RESEND_TIMEOUT"));
   }
+  resender_ = new Resender(timeout, 100, this);
 
   if (!is_scheduler_) {
     // start heartbeat thread
@@ -141,8 +141,7 @@ int Van::Send(const Message& msg) {
 
 void Van::Receiving() {
   const char* heartbeat_timeout_val = Environment::Get()->find("PS_HEARTBEAT_TIMEOUT");
-  const int heartbeat_timeout =
-    heartbeat_timeout_val ? atoi(heartbeat_timeout_val) : kDefaultHeartbeatInterval;
+  const int heartbeat_timeout = heartbeat_timeout_val ? atoi(heartbeat_timeout_val) : kDefaultHeartbeatInterval;
   Meta nodes;  // for scheduler usage
   while (true) {
     Message msg;
@@ -188,7 +187,7 @@ void Van::Receiving() {
           } else {
             // some node dies and restarts
             CHECK(ready_);
-            CHECK_GT(heartbeat_timeout, 0);
+            LOG(INFO) << "receive a recovery node: " << msg.DebugString();
             for (size_t i = 0; i < nodes.control.node.size() - 1; ++i) {
               const auto& node = nodes.control.node[i];
               if (dead_set.find(node.id) != dead_set.end() && node.role == ctrl.node[0].role) {
@@ -200,6 +199,7 @@ void Van::Receiving() {
                            << " by node " << recovery_node.DebugString();
                 nodes.control.node[i] = recovery_node;
                 recovery_nodes.control.node.push_back(recovery_node);
+                LOG(INFO) << "recovery node found a matched dead node";
                 break;
               }
             }
@@ -246,7 +246,7 @@ void Van::Receiving() {
             CHECK_EQ(Postoffice::Get()->num_workers(), num_workers_);
             nodes.control.node.push_back(my_node_);
             nodes.control.cmd = Control::ADD_NODE;
-            Message back;
+            Message back; 
             back.meta = nodes;
             back.meta.sender = my_node_.id;
             for (int r : Postoffice::Get()->GetNodeIDs(
@@ -255,8 +255,9 @@ void Van::Receiving() {
               back.meta.timestamp = timestamp_++;
               Send(back);
             }
-            PS_VLOG(1) << "the scheduler is connected to "
+            LOG(INFO) << "the scheduler is connected to "
                     << num_workers_ << " workers and " << num_servers_ << " servers";
+            LOG(INFO) << "scheduler ready. global node info: " << back.DebugString();
             ready_ = true;
           } else if (recovery_nodes.control.node.size() > 0) {
             // send back the recovery node
@@ -279,6 +280,7 @@ void Van::Receiving() {
               back.meta.timestamp = timestamp_++;
               Send(back);
             }
+            LOG(INFO) << "recovery node successfully";
           }
         } else {
           for (const auto& node : ctrl.node) {
@@ -289,6 +291,7 @@ void Van::Receiving() {
           CHECK_EQ(Postoffice::Get()->num_servers(), num_servers_);
           CHECK_EQ(Postoffice::Get()->num_workers(), num_workers_);
           PS_VLOG(1) << my_node_.ShortDebugString() << " is connected to others";
+          LOG(INFO) << "van ready";
           ready_ = true;
         }
       } else if (ctrl.cmd == Control::BARRIER) {
@@ -311,6 +314,7 @@ void Van::Receiving() {
               res.meta.recver = r;
               res.meta.timestamp = timestamp_++;
               CHECK_GT(Send(res), 0);
+              PS_VLOG(1) << "send barrier response: " << res.DebugString();
             }
           }
         } else {
@@ -337,8 +341,8 @@ void Van::Receiving() {
       CHECK_NE(msg.meta.recver, Meta::kEmpty);
       CHECK_NE(msg.meta.customer_id, Meta::kEmpty);
       int id = msg.meta.customer_id;
-      auto* obj = Postoffice::Get()->GetCustomer(id, 5);
-      CHECK(obj) << "timeout (5 sec) to wait App " << id << " ready";
+      auto* obj = Postoffice::Get()->GetCustomer(id, 60);
+      CHECK(obj) << "timeout (60 sec) to wait App " << id << " ready";
       obj->Accept(msg);
     }
   }
@@ -377,7 +381,8 @@ void Van::PackMeta(const Meta& meta, char** meta_buf, int* buf_size) {
 
   // to string
   *buf_size = pb.ByteSize();
-  *meta_buf = new char[*buf_size+1];
+  //*meta_buf = new char[*buf_size+1];
+  *meta_buf = new char[*buf_size];
   CHECK(pb.SerializeToArray(*meta_buf, *buf_size))
       << "failed to serialize protbuf";
 }

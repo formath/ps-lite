@@ -1,3 +1,4 @@
+#include <cmath>
 #include "ps/ps.h"
 using namespace ps;
 
@@ -15,21 +16,24 @@ void RunWorker() {
   // init
   int num = 10;
   std::vector<Key> keys(num);
+  std::vector<Key> fields(num);
   std::vector<float> vals(num);
 
   int rank = MyRank();
   srand(rank + 7);
   for (int i = 0; i < num; ++i) {
     keys[i] = Postoffice::Get()->MaxKey() / num * i + rank;
+    fields[i] = i;
     vals[i] = (rand() % 1000);
-    std::cout << "origin key: " << keys[i] << " value:" << vals[i] << std::endl;
+    std::cout << "origin key: " << keys[i] << " field: " << fields[i] << " value:" << vals[i] << std::endl;
   }
 
   // push
   int repeat = 50;
   std::vector<int> ts;
   for (int i = 0; i < repeat; ++i) {
-    ts.push_back(kv.Push(keys, vals));
+    ts.push_back(kv.Push(keys, fields, vals));
+    //ts.push_back(kv.Push(keys, {}, vals));
 
     // to avoid too frequency push, which leads huge memory usage
     if (i > 10) kv.Wait(ts[ts.size()-10]);
@@ -38,11 +42,12 @@ void RunWorker() {
 
   // pull
   std::vector<float> rets;
-  kv.Wait(kv.Pull(keys, &rets));
+  kv.Wait(kv.Pull(keys, fields, &rets));
+  //kv.Wait(kv.Pull(keys, {}, &rets));
 
   float res = 0;
   for (int i = 0; i < num; ++i) {
-    std::cout << "pull key: " << keys[i] << " value:" << rets[i] << std::endl;
+    std::cout << "pull key: " << keys[i] << " field: " << fields[i] << " value:" << rets[i] << std::endl;
     res += fabs(rets[i] - vals[i] * repeat);
   }
   CHECK_LT(res / repeat, 1e-5);

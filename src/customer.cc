@@ -10,8 +10,8 @@ const int Meta::kEmpty = std::numeric_limits<int>::max();
 
 Customer::Customer(int id, const Customer::RecvHandle& recv_handle)
     : id_(id), recv_handle_(recv_handle) {
-  Postoffice::Get()->AddCustomer(this);
   recv_thread_ = std::unique_ptr<std::thread>(new std::thread(&Customer::Receiving, this));
+  Postoffice::Get()->AddCustomer(this);
 }
 
 Customer::~Customer() {
@@ -32,6 +32,13 @@ int Customer::NewRequest(int recver) {
 void Customer::WaitRequest(int timestamp) {
   std::unique_lock<std::mutex> lk(tracker_mu_);
   tracker_cond_.wait(lk, [this, timestamp]{
+      return tracker_[timestamp].first == tracker_[timestamp].second;
+    });
+}
+
+bool Customer::WaitRequest(int timestamp, int timeout) {
+  std::unique_lock<std::mutex> lk(tracker_mu_);
+  return tracker_cond_.wait_for(lk, std::chrono::duration<int, std::milli>(timeout), [this, timestamp]{
       return tracker_[timestamp].first == tracker_[timestamp].second;
     });
 }
@@ -58,9 +65,7 @@ void Customer::Receiving() {
     if (!recv.meta.request) {
       std::lock_guard<std::mutex> lk(tracker_mu_);
       tracker_[recv.meta.timestamp].second++;
-      if (tracker_[recv.meta.timestamp].first == tracker_[recv.meta.timestamp].second) {
-        tracker_cond_.notify_all();
-      }
+      tracker_cond_.notify_all();
     }
   }
 }

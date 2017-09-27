@@ -35,6 +35,8 @@ struct KVPairs {
   // KVPairs() {}
   /** \brief the list of keys */
   SArray<Key> keys;
+  /** \brief the list of fieldis */
+  SArray<Key> fields;
   /** \brief the according values */
   SArray<Val> vals;
   /** \brief the according value lengths (could be empty) */
@@ -108,12 +110,13 @@ class KVWorker : public SimpleApp {
    * @return the timestamp of this request
    */
   int Push(const std::vector<Key>& keys,
+           const std::vector<Key>& fields,
            const std::vector<Val>& vals,
            const std::vector<int>& lens = {},
            int cmd = 0,
            const Callback& cb = nullptr) {
     return ZPush(
-        SArray<Key>(keys), SArray<Val>(vals), SArray<int>(lens), cmd, cb);
+        SArray<Key>(keys), SArray<Key>(fields), SArray<Val>(vals), SArray<int>(lens), cmd, cb);
   }
 
   /**
@@ -143,11 +146,12 @@ class KVWorker : public SimpleApp {
    * @return the timestamp of this request
    */
   int Pull(const std::vector<Key>& keys,
+           const std::vector<Key>& fields,
            std::vector<Val>* vals,
            std::vector<int>* lens = nullptr,
            int cmd = 0,
            const Callback& cb = nullptr) {
-    return Pull_(SArray<Key>(keys), vals, lens, cmd, cb);
+    return Pull_(SArray<Key>(keys), SArray<Key>(fields), vals, lens, cmd, cb);
   }
 
   /**
@@ -165,6 +169,21 @@ class KVWorker : public SimpleApp {
   void Wait(int timestamp) { obj_->WaitRequest(timestamp); }
 
   /**
+   * \brief Waits until a push or pull has been finished or timeout
+   *
+   * Sample usage:
+   * \code
+   *   int ts = w.Pull(keys, &vals);
+   *   Wait(ts);
+   *   // now vals is ready for use
+   * \endcode
+   *
+   * \param timestamp the timestamp returned by the push or pull
+   * \param timeout ms
+   */
+  bool Wait(int timestamp, int timeout) { return obj_->WaitRequest(timestamp, timeout); }
+
+  /**
    * \brief zero-copy Push
    *
    * This function is similar to \ref Push except that all data
@@ -173,6 +192,7 @@ class KVWorker : public SimpleApp {
    * finished.
    */
   int ZPush(const SArray<Key>& keys,
+            const SArray<Key>& fields,
             const SArray<Val>& vals,
             const SArray<int>& lens = {},
             int cmd = 0,
@@ -181,6 +201,7 @@ class KVWorker : public SimpleApp {
     AddCallback(ts, cb);
     KVPairs<Val> kvs;
     kvs.keys = keys;
+    kvs.fields = fields;
     kvs.vals = vals;
     kvs.lens = lens;
     Send(ts, true, cmd, kvs);
@@ -196,11 +217,12 @@ class KVWorker : public SimpleApp {
    * finished.
    */
   int ZPull(const SArray<Key>& keys,
+            const SArray<Key>& fields,
             SArray<Val>* vals,
             SArray<int>* lens = nullptr,
             int cmd = 0,
             const Callback& cb = nullptr) {
-    return Pull_(keys, vals, lens, cmd, cb);
+    return Pull_(keys, fields, vals, lens, cmd, cb);
   }
   using SlicedKVs = std::vector<std::pair<bool, KVPairs<Val>>>;
   /**
@@ -226,7 +248,9 @@ class KVWorker : public SimpleApp {
    * \brief internal pull, C/D can be either SArray or std::vector
    */
   template <typename C, typename D>
-  int Pull_(const SArray<Key>& keys, C* vals, D* lens,
+  int Pull_(const SArray<Key>& keys,
+            const SArray<Key>& fields,
+            C* vals, D* lens,
             int cmd, const Callback& cb);
   /**
    * \brief add a callback for a request. threadsafe.
@@ -337,9 +361,14 @@ struct KVServerDefaultHandle {
     size_t n = req_data.keys.size();
     KVPairs<Val> res;
     if (req_meta.push) {
+      if (req_data.fields.size()) {
+        CHECK_EQ(n, req_data.fields.size());
+      }
       CHECK_EQ(n, req_data.vals.size());
     } else {
-      res.keys = req_data.keys; res.vals.resize(n);
+      res.keys = req_data.keys;
+      res.fields = req_data.fields;
+      res.vals.resize(n);
     }
     for (size_t i = 0; i < n; ++i) {
       Key key = req_data.keys[i];
@@ -370,12 +399,14 @@ void KVServer<Val>::Process(const Message& msg) {
   KVPairs<Val> data;
   int n = msg.data.size();
   if (n) {
-    CHECK_GE(n, 2);
+    CHECK_GE(n, 3);
     data.keys = msg.data[0];
-    data.vals = msg.data[1];
-    if (n > 2) {
-      CHECK_EQ(n, 3);
-      data.lens = msg.data[2];
+    data.fields = msg.data[1];
+    data.vals = msg.data[2];
+    CHECK(data.fields.size() == 0 || data.fields.size() == data.keys.size());
+    if (n > 3) {
+      CHECK_EQ(n, 4);
+      data.lens = msg.data[3];
       CHECK_EQ(data.lens.size(), data.keys.size());
     }
   }
@@ -395,6 +426,7 @@ void KVServer<Val>::Response(const KVMeta& req, const KVPairs<Val>& res) {
   msg.meta.sender = Postoffice::Get()->van()->my_node().id;
   if (res.keys.size()) {
     msg.AddData(res.keys);
+    msg.AddData(res.fields);
     msg.AddData(res.vals);
     if (res.lens.size()) {
       msg.AddData(res.lens);
@@ -433,6 +465,9 @@ void KVWorker<Val>::DefaultSlicer(
 
   // the length of value
   size_t k = 0, val_begin = 0, val_end = 0;
+  if (send.fields.size()) {
+    CHECK_EQ(send.keys.size(), send.fields.size());
+  }
   if (send.lens.empty()) {
     k = send.vals.size() / send.keys.size();
     CHECK_EQ(k * send.keys.size(), send.vals.size());
@@ -449,6 +484,9 @@ void KVWorker<Val>::DefaultSlicer(
     sliced->at(i).first = true;
     auto& kv = sliced->at(i).second;
     kv.keys = send.keys.segment(pos[i], pos[i+1]);
+    if (send.fields.size()) {
+      kv.fields = send.fields.segment(pos[i], pos[i+1]);
+    }
     if (send.lens.size()) {
       kv.lens = send.lens.segment(pos[i], pos[i+1]);
       for (int l : kv.lens) val_end += l;
@@ -490,6 +528,7 @@ void KVWorker<Val>::Send(int timestamp, bool push, int cmd, const KVPairs<Val>& 
     const auto& kvs = s.second;
     if (kvs.keys.size()) {
       msg.AddData(kvs.keys);
+      msg.AddData(kvs.fields);
       msg.AddData(kvs.vals);
       if (kvs.lens.size()) {
         msg.AddData(kvs.lens);
@@ -509,12 +548,13 @@ void KVWorker<Val>::Process(const Message& msg) {
   // store the data for pulling
   int ts = msg.meta.timestamp;
   if (!msg.meta.push && msg.data.size()) {
-    CHECK_GE(msg.data.size(), (size_t)2);
+    CHECK_GE(msg.data.size(), (size_t)3);
     KVPairs<Val> kvs;
     kvs.keys = msg.data[0];
-    kvs.vals = msg.data[1];
-    if (msg.data.size() > (size_t)2) {
-      kvs.lens = msg.data[2];
+    kvs.fields = msg.data[1];
+    kvs.vals = msg.data[2];
+    if (msg.data.size() > (size_t)3) {
+      kvs.lens = msg.data[3];
     }
     mu_.lock();
     recv_kvs_[ts].push_back(kvs);
@@ -545,24 +585,31 @@ void KVWorker<Val>::RunCallback(int timestamp) {
 template <typename Val>
 template <typename C, typename D>
 int KVWorker<Val>::Pull_(
-    const SArray<Key>& keys, C* vals, D* lens, int cmd, const Callback& cb) {
+    const SArray<Key>& keys, const SArray<Key>& fields, C* vals, D* lens, int cmd, const Callback& cb) {
   int ts = obj_->NewRequest(kServerGroup);
-  AddCallback(ts, [this, ts, keys, vals, lens, cb]() mutable {
+  AddCallback(ts, [this, ts, keys, fields, vals, lens, cb]() mutable {  
       mu_.lock();
       auto& kvs = recv_kvs_[ts];
       mu_.unlock();
 
       // do check
-      size_t total_key = 0, total_val = 0;
+      size_t total_key = 0, total_field = 0, total_val = 0;
       for (const auto& s : kvs) {
         Range range = FindRange(keys, s.keys.front(), s.keys.back()+1);
         CHECK_EQ(range.size(), s.keys.size())
             << "unmatched keys size from one server";
+        if (fields.size()) {
+          CHECK_EQ(s.fields.size(), s.keys.size());
+        }
         if (lens) CHECK_EQ(s.lens.size(), s.keys.size());
         total_key += s.keys.size();
+        if (fields.size()) {
+          total_field += s.fields.size();
+        }
         total_val += s.vals.size();
       }
       CHECK_EQ(total_key, keys.size()) << "lost some servers?";
+      CHECK_EQ(total_field, fields.size()) << "lost some servers?";
 
       // fill vals and lens
       std::sort(kvs.begin(), kvs.end(), [](
@@ -600,7 +647,9 @@ int KVWorker<Val>::Pull_(
       if (cb) cb();
     });
 
-  KVPairs<Val> kvs; kvs.keys = keys;
+  KVPairs<Val> kvs;
+  kvs.keys = keys;
+  kvs.fields = fields;
   Send(ts, false, cmd, kvs);
   return ts;
 }
